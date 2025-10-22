@@ -1,0 +1,3 @@
+# pyenv and poetry virtual environment files
+.venv
+.python-version
