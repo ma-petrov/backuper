@@ -1,3 +1,9 @@
+# VS Code
+.vscode
+
 # pyenv and poetry virtual environment files
 .venv
 .python-version
+
+# python
+*__pycache__*
