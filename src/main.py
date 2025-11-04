@@ -32,8 +32,12 @@ def create_sftp_client(
 def get_local_path(local_path: str) -> str:
     """Возвращает путь директории, куда будут скопированы файлы."""
 
-    now = datetime.datetime.now(tz=zoneinfo.ZoneInfo("Europe/Moscow"))
-    return str(pathlib.Path(local_path, now.isoformat()))
+    filename = (
+        datetime.datetime.now(tz=zoneinfo.ZoneInfo("Europe/Moscow"))
+        .isoformat()
+        .replace(":", "-")
+    )
+    return str(pathlib.Path(local_path, filename))
 
 
 @utils.spinner(description="Discovering files to copy")
@@ -82,12 +86,12 @@ def copy(
     for file in utils.progress(typing.cast("utils.IterableSized[str]", files)):
         try:
             sftp_client.get(
-                remotepath=str(pathlib.Path(remote_path, file)),
+                remotepath=pathlib.Path(remote_path, file).as_posix(),
                 localpath=str(pathlib.Path(local_path, file)),
             )
 
         except (OSError, FileNotFoundError) as error:
-            print(error)
+            print(error, file)
             break
 
 
