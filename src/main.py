@@ -1,21 +1,13 @@
 import argparse
 import contextlib
 import datetime
-import logging
 import pathlib
-import stat
 import typing
 import zoneinfo
 
 import paramiko
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s] %(asctime)s | %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-DIR_NAME_FORMAT = r"%d.%m.%Y_%H:%M:%S.%"
+import utils
 
 
 @contextlib.contextmanager
@@ -23,8 +15,8 @@ def create_sftp_client(
     hostname: str,
     username: str,
     key_filename: str,
-) -> typing.Generator[paramiko.SFTPClient]:
-    """Создаёт SFTP клиент"""
+) -> typing.Generator[tuple[paramiko.SSHClient, paramiko.SFTPClient]]:
+    """Создаёт SSH и SFTP клиенты."""
 
     with paramiko.SSHClient() as ssh_client:
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -34,63 +26,100 @@ def create_sftp_client(
             key_filename=key_filename,
         )
         with ssh_client.open_sftp() as sftp_client:
-            yield sftp_client
+            yield ssh_client, sftp_client
 
 
 def get_local_path(local_path: str) -> str:
-    """Возвращает путь директории, куда будут скопированы файлы"""
+    """Возвращает путь директории, куда будут скопированы файлы."""
 
     now = datetime.datetime.now(tz=zoneinfo.ZoneInfo("Europe/Moscow"))
-    return pathlib.Path(local_path, now.isoformat())
+    return str(pathlib.Path(local_path, now.isoformat()))
 
 
-def copy_recursive(
+@utils.spinner(description="Discovering files to copy")
+def get_files(
+    ssh_client: paramiko.SSHClient,
+    remote_path: str,
+) -> list[str]:
+    """Возвращает список относительный путей копируемых файлов."""
+
+    command = f"cd {remote_path} && find . -type f"
+    stdout: paramiko.ChannelFile = ssh_client.exec_command(command)[1]
+    return [f for f in stdout.read().decode("utf-8").split("\n") if f]
+
+
+@utils.spinner(description="Creating local directories")
+def create_local_directories(
+    local_path: str,
+    files: list[str],
+) -> None:
+    """Создаёт директории, куда будут скопированы файлы."""
+
+    try:
+        # Создание корневого каталога для бэкапа.
+        pathlib.Path(local_path).mkdir(parents=True)
+
+        # Создание остальных подкаталогов.
+        for file in files:
+            directory = pathlib.Path(local_path, pathlib.Path(file).parent)
+            directory.mkdir(parents=True, exist_ok=True)
+
+    except OSError as error:
+        print(error)
+        return None
+
+
+def copy(
     sftp_client: paramiko.SFTPClient,
     remote_path: str,
     local_path: str,
+    files: list[str],
 ) -> None:
-    """Рекурсивно копирует файлы и директории"""
+    """Копирует файлы из списка."""
 
-    pathlib.Path(local_path).mkdir(parents=True, exist_ok=True)
+    file: str
 
-    for item in sftp_client.listdir_attr(path=remote_path):
-        remote = str(pathlib.Path(remote_path, item.filename))
-        local = str(pathlib.Path(local_path, item.filename))
-
-        if stat.S_ISDIR(item.st_mode):
-            copy_recursive(
-                sftp_client=sftp_client,
-                remote_path=remote,
-                local_path=local,
+    for file in utils.progress(typing.cast("utils.IterableSized[str]", files)):
+        try:
+            sftp_client.get(
+                remotepath=str(pathlib.Path(remote_path, file)),
+                localpath=str(pathlib.Path(local_path, file)),
             )
 
-        else:
-            sftp_client.get(remotepath=remote, localpath=local)
-            logger.info(f"Copied: {remote} -> {local}")
+        except (OSError, FileNotFoundError) as error:
+            print(error)
+            break
 
 
 def backup(args: argparse.Namespace) -> None:
-    """Создаёт бэкап файлов"""
+    """Создаёт бэкап файлов."""
 
     local_path = get_local_path(local_path=args.local_path)
 
-    # Попытка создать каталог backup"а, если каталог уже существует или его
-    # невозможно создать скрипт завершается.
-    try:
-        pathlib.Path(local_path).mkdir(parents=True)
-    except OSError as error:
-        logger.error(error)
-        return None
-
-    # Копирование файлов
     with create_sftp_client(
         hostname=args.hostname,
         username=args.username,
         key_filename=args.ssh_key_path,
-    ) as sftp_client:
-        copy_recursive(sftp_client, args.remote_path, local_path)
+    ) as (ssh_client, sftp_client):
 
-    logger.info(f"Backup created: {local_path}")
+        files: list[str] = get_files(
+            ssh_client=ssh_client,
+            remote_path=args.remote_path,
+        )
+
+        create_local_directories(
+            local_path=local_path,
+            files=files,
+        )
+
+        copy(
+            sftp_client=sftp_client,
+            remote_path=args.remote_path,
+            local_path=local_path,
+            files=files,
+        )
+
+    print(f"\n{utils.Y}Finished{utils._} [{local_path}]")
 
 
 parser = argparse.ArgumentParser(description="SSH backup utility")

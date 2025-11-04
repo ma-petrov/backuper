@@ -14,7 +14,9 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "ruff (>=0.14.1,<0.15.0)"
+    "ruff (>=0.14.1,<0.15.0)",
+    "mypy (>=1.18.2,<2.0.0)",
+    "types-paramiko (>=4.0.0.20250822,<5.0.0.0)"
 ]
 
 [tool.ruff]
@@ -27,8 +29,10 @@ ignore = [
     "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D400", "D415",
     "ANN101", "ANN102", "ANN401",
     "COM812", "ISC001",
-    "UP031", "RUF003", "D202",
+    "UP031", "D202",
     "G004", "RET501", "TRY400",
+    "T201",
+    "RUF002", "RUF003"
 ]
 
 [tool.ruff.lint.pydocstyle]
